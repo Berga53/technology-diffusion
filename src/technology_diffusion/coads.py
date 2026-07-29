@@ -15,6 +15,7 @@ from .heuristics import technology_diffusion_heuristics
 
 
 def _max_comp_size_in_seedset(g: nx.Graph, seedset: set[int]) -> int:
+    """Return the largest connected-component size induced by ``seedset``."""
     if len(seedset) == 0:
         return 0
     if len(seedset) == 1:
@@ -24,16 +25,19 @@ def _max_comp_size_in_seedset(g: nx.Graph, seedset: set[int]) -> int:
 
 
 def _meets_min_connectedness(g: nx.Graph, seedset: set[int], min_conn_req: int) -> bool:
+    """Return whether a seed set contains a component of the required size."""
     return _max_comp_size_in_seedset(g, seedset) >= int(min_conn_req)
 
 
 def _x_from_seedset(n_nodes: int, seedset: set[int]) -> np.ndarray:
+    """Encode a seed set as a binary vector."""
     x = np.zeros(n_nodes)
     x[list(seedset)] = 1.0
     return x
 
 
 def _seedset_from_x(x: np.ndarray) -> set[int]:
+    """Decode the nonzero indices of a seed vector."""
     return set(np.nonzero(x)[0])
 
 
@@ -45,19 +49,22 @@ def _print_coads_status(
     spread: int,
     done: bool = False,
 ) -> None:
+    """Print an in-place progress update when verbose output is enabled."""
     if not verbose:
         return
     if done:
         print(
             "\r"
-            + f"COaDS search... Done! Calls:{calls}. Time: {round(time.perf_counter()-start)}/{max_time} s. "
+            + f"COaDS search... Done! Calls:{calls}. Time: "
+            + f"{round(time.perf_counter()-start)}/{max_time} s. "
             + f"Influence spread: {spread}."
             + " " * 20
         )
     else:
         print(
             "\r"
-            + f"COaDS search... Calls:{calls}. Time: {round(time.perf_counter()-start)}/{max_time} s. "
+            + f"COaDS search... Calls:{calls}. Time: "
+            + f"{round(time.perf_counter()-start)}/{max_time} s. "
             + f"Influence spread: {spread}."
             + " " * 20,
             end="",
@@ -65,6 +72,7 @@ def _print_coads_status(
 
 
 def _generate_swap_neighbors(g: nx.Graph, idx: set[int]) -> list[set[int]]:
+    """Generate one-for-one swaps along edges leaving the seed set."""
     neighbors = []
     for elem1 in idx:
         for elem2 in set(g.neighbors(elem1)) - idx:
@@ -76,6 +84,11 @@ def _generate_swap_neighbors(g: nx.Graph, idx: set[int]) -> list[set[int]]:
 
 
 def _generate_d_exchange_neighbors(n_nodes: int, idx: set[int], d: int) -> list[set[int]]:
+    """Generate equal-size exchanges up to the radius implied by ``d``.
+
+    For each ``i`` in ``range(d // 2)``, the function removes ``i + 1`` seeds
+    and inserts the same number of non-seed nodes.
+    """
     neighbors = []
     idx_temp = set(range(n_nodes)) - idx
     for i in range(d // 2):
@@ -90,6 +103,7 @@ def _filter_feasible_neighbors(
     neighbors: list[set[int]],
     min_conn: int,
 ) -> list[set[int]]:
+    """Discard candidates that violate the minimum connectedness condition."""
     return [seedset for seedset in neighbors if _meets_min_connectedness(g, seedset, min_conn)]
 
 
@@ -111,6 +125,18 @@ def _evaluate_neighbors(
     target_spread: int,
     early_break: bool = True,
 ) -> tuple[bool, np.ndarray, int, int, bool]:
+    """Evaluate unseen neighboring seed sets and retain the best improvement.
+
+    Evaluation stops immediately at ``target_spread``. With ``early_break``
+    enabled, it also stops after achieving a multiplicative improvement greater
+    than ``1 + xi_t`` over the starting spread.
+
+    Returns
+    -------
+    tuple
+        Whether the target was reached, best seed vector, best spread, updated
+        diffusion-call count, and timeout flag.
+    """
     s_temp = s_base
     x_temp = x_base
 
@@ -118,6 +144,7 @@ def _evaluate_neighbors(
         x_elem = _x_from_seedset(n_nodes, elem)
         key = tuple(x_elem)
 
+        # The bounded tabu buffer avoids repeating recent diffusion calls.
         if key in buffer:
             continue
         if time_exceeded(start, max_time):
@@ -148,6 +175,13 @@ def _make_move_connected_seedset(
     v: int,
     k: int,
 ) -> set[int] | None:
+    """Build a connected size-``k`` move that introduces node ``v``.
+
+    The new node is joined to its closest current seed by a shortest path. The
+    path is then expanded with adjacent nodes from the old seed set until the
+    original cardinality is restored. ``None`` is returned when this cannot
+    produce a connected set of exactly ``k`` nodes.
+    """
     v = int(v)
     if v in seedset:
         return None
@@ -217,6 +251,19 @@ def _mg_phase(
     mg_max_depth: int,
     mg_memory_len: int,
 ) -> tuple[bool, bool, np.ndarray, int, int, bool]:
+    """Run the component-aware MG neighborhood phase.
+
+    Breadth-first layers around current seeds provide candidate insertion
+    nodes. Candidates are ranked by how many neighbors have thresholds no
+    greater than the current radius, then converted into connected size-``k``
+    moves.
+
+    Returns
+    -------
+    tuple
+        Whether the target was reached, whether spread improved, best seed
+        vector, best spread, updated diffusion-call count, and timeout flag.
+    """
     improved_mg = False
     stop = False
     x_temp = _x_from_seedset(n_nodes, idx)
@@ -257,6 +304,8 @@ def _mg_phase(
 
             layer_entries = []
             for v in cand:
+                # This local score favors nodes adjacent to thresholds that the
+                # current search radius is already large enough to support.
                 mg_v = sum(1 for w in g.neighbors(v) if thetas[int(w)] <= radius)
                 layer_entries.append((int(mg_v), int(v)))
 
@@ -349,6 +398,50 @@ def COaDS_td(
     buffer_dim: int,
     verbose: int = 0,
 ) -> tuple[list[int], list[np.ndarray], list[list[float]]]:
+    """Improve a fixed-cardinality seed set with COaDS local search.
+
+    Each iteration first tries component-aware MG moves, then edge swaps, and
+    finally broader equal-cardinality exchanges. Only candidates satisfying
+    ``min_conn`` are evaluated. The acceptance threshold ``xi_t`` shrinks by
+    ``delta`` after improvements that are too small to clear the current
+    threshold.
+
+    Parameters
+    ----------
+    g:
+        Diffusion graph with nodes indexed from ``0`` to ``n - 1``.
+    thetas:
+        Activation threshold for each node.
+    x0:
+        Initial binary seed vector; its nonzero count fixes the search
+        cardinality.
+    delta:
+        Multiplicative decay applied to the sufficient-improvement threshold.
+    xi:
+        Initial sufficient-improvement threshold.
+    d:
+        Controls the largest equal-cardinality exchange neighborhood.
+    min_conn:
+        Minimum size of the largest component induced by every candidate seed
+        set.
+    mg_max_depth:
+        Maximum breadth-first depth explored by the MG phase.
+    mg_memory_len:
+        Number of MG candidate layers retained for ranking.
+    max_time:
+        Search time budget in seconds.
+    buffer_dim:
+        Maximum number of recently evaluated seed vectors retained in the tabu
+        buffer.
+    verbose:
+        If truthy, print in-place progress updates.
+
+    Returns
+    -------
+    tuple
+        Spread history, accepted seed-vector history, and detailed improvement
+        history as ``[spread, elapsed, diffusion_calls]`` entries.
+    """
     n_nodes = len(x0)
     x_hist = [np.array(x0, dtype=float)]
 
@@ -378,6 +471,7 @@ def COaDS_td(
 
         idx = _seedset_from_x(x_hist[-1])
 
+        # Phase 1: attempt component-aware moves constructed around BFS layers.
         found_opt, improved_mg, x_temp, s_temp, calls, mg_stop = _mg_phase(
             g,
             thetas,
@@ -417,6 +511,8 @@ def COaDS_td(
                 xi_t = xi_t * delta
             continue
 
+        # Phase 2: search the local neighborhood formed by swaps across the
+        # boundary of the current seed set.
         neighbors = _generate_swap_neighbors(g, idx)
         neighbors = _filter_feasible_neighbors(g, neighbors, min_conn=min_conn)
         found_opt, x_temp, s_temp, calls, stop = _evaluate_neighbors(
@@ -458,6 +554,7 @@ def COaDS_td(
         s_hist.pop()
 
         idx = _seedset_from_x(x_hist[-1])
+        # Phase 3: when swaps stall, search progressively larger exchanges.
         neighbors = _generate_d_exchange_neighbors(n_nodes, idx, d)
         neighbors = _filter_feasible_neighbors(g, neighbors, min_conn=min_conn)
         found_opt, x_temp, s_temp, calls, stop = _evaluate_neighbors(
@@ -500,6 +597,7 @@ def COaDS_td(
     _print_coads_status(verbose, calls, start, max_time, s_hist[-1], done=True)
     return s_hist, x_hist, history
 
+
 def _print_binary_search_status(
     verbose: int,
     k: int,
@@ -508,24 +606,28 @@ def _print_binary_search_status(
     max_time: float,
     done: bool = False,
 ) -> None:
+    """Print an in-place outer-search update when verbosity is enabled."""
     if not verbose:
         return
     if done:
         print(
             "\r"
-            + f"Binary search... Done! k:{best_k}. Time: {round(time.perf_counter()-start)}/{max_time} s. "
+            + f"Binary search... Done! k:{best_k}. Time: "
+            + f"{round(time.perf_counter()-start)}/{max_time} s. "
             + " " * 20
         )
     else:
         print(
             "\r"
-            + f"Binary search... best k:{best_k}. Trying {k}. Time: {round(time.perf_counter()-start)}/{max_time} s. "
+            + f"Binary search... best k:{best_k}. Trying {k}. Time: "
+            + f"{round(time.perf_counter()-start)}/{max_time} s. "
             + " " * 20,
             end="",
         )
 
 
 def _remaining_time(start: float, max_time: float) -> float:
+    """Return the nonnegative number of seconds left in the shared budget."""
     return max(0.0, float(max_time) - (time.perf_counter() - start))
 
 
@@ -540,8 +642,24 @@ def _rank_heuristics(
     int,
     int | None,
     np.ndarray | None,
-    tuple[int, float] | None,
 ]:
+    """Rank deterministic initializers by the seed counts they achieve.
+
+    The final entry in ``strategy`` is reserved as the randomized fallback and
+    is not included in the ranking run. Failed deterministic heuristics receive
+    a worst-case score.
+
+    Returns
+    -------
+    tuple
+        Ranked strategies (followed by the random fallback), initial upper
+        bound, best seed count, and best seed vector.
+
+    Raises
+    ------
+    ValueError
+        If ``strategy`` is empty.
+    """
     n_nodes = g.number_of_nodes()
     if len(strategy) == 0:
         raise ValueError("strategy must contain at least one heuristic.")
@@ -581,6 +699,7 @@ def _rank_heuristics(
 
     return strategy_order, top_k, best_k, best_x
 
+
 def COaDS_technology_diffusion_binary_search(
     g: nx.Graph,
     thetas: Mapping[int, int] | np.ndarray,
@@ -595,6 +714,48 @@ def COaDS_technology_diffusion_binary_search(
     buffer_dim: int,
     verbose: int = 0,
 ) -> tuple[int | None, np.ndarray | None, float, list[tuple[int, float]]]:
+    """Minimize seed count by wrapping COaDS in an outer search.
+
+    Deterministic initializers are first ranked by solution quality. A binary
+    search then runs fixed-cardinality COaDS trials within portions of the
+    shared time budget. Finally, the search repeatedly targets one seed below
+    the incumbent and rotates through the ranked strategies.
+
+    Parameters
+    ----------
+    g:
+        Diffusion graph with nodes indexed from ``0`` to ``n - 1``.
+    thetas:
+        Activation threshold for each node.
+    strategy:
+        Ordered seed-selection functions. The last function is treated as the
+        randomized fallback; preceding functions are ranked before the search.
+    delta:
+        Multiplicative decay for COaDS's improvement threshold.
+    xi:
+        Initial COaDS sufficient-improvement threshold.
+    d:
+        Controls the largest exchange neighborhood used by COaDS.
+    min_conn:
+        Required size of the largest seed-induced component.
+    mg_max_depth:
+        Maximum breadth-first depth of the MG phase.
+    mg_memory_len:
+        Number of MG candidate layers retained for ranking.
+    max_time:
+        Shared time budget in seconds, including heuristic ranking.
+    buffer_dim:
+        Maximum size of COaDS's recent-candidate buffer.
+    verbose:
+        If truthy, print in-place outer-search progress.
+
+    Returns
+    -------
+    tuple
+        Best seed count, best binary seed vector, elapsed seconds, and incumbent
+        history as ``(seed_count, elapsed)`` pairs. The first two values may be
+        ``None`` if no initializer finishes within the budget.
+    """
 
     start = time.perf_counter()
     n_nodes = g.number_of_nodes()
@@ -628,8 +789,10 @@ def COaDS_technology_diffusion_binary_search(
             break
 
         interval = max(1, top_k - bottom_k + 1)
+        # Reserve an approximately equal budget for each remaining level of the
+        # binary-search tree.
         time_single = remaining / max(1, math.ceil(math.log2(interval)))
-        
+
         x = strategy_order[0](g, n_nodes, k, thetas=thetas, connected=1)
         remaining_after_seed = _remaining_time(start, max_time)
         if remaining_after_seed <= 0:
@@ -667,6 +830,8 @@ def COaDS_technology_diffusion_binary_search(
                 history.append((best_k, round(time.perf_counter() - start, 4)))
             top_k = k - 1
         else:
+            # Seeding the nodes that remain inactive gives a feasible upper
+            # bound even when the fixed-k COaDS trial misses full diffusion.
             inferred_success_k = k + (n_nodes - spread)
             if best_k is None or inferred_success_k < best_k:
                 if _remaining_time(start, max_time) <= 0:
@@ -681,6 +846,8 @@ def COaDS_technology_diffusion_binary_search(
                 top_k = inferred_success_k - 1
             bottom_k = k + 1
 
+    # Spend the remaining budget trying to improve the incumbent one seed at a
+    # time, advancing to another initializer after each failed attempt.
     random.seed(42)
     while time.perf_counter() - start < max_time and best_k is not None and best_k > 1:
         k = best_k - 1
@@ -706,7 +873,7 @@ def COaDS_technology_diffusion_binary_search(
         coads_budget = min(remaining_after_seed, remaining)
         if coads_budget <= 0:
             break
-        
+
         _print_binary_search_status(verbose, k, best_k, start, max_time, done=False)
         s, final_x, _ = COaDS_td(
             g,
@@ -730,7 +897,7 @@ def COaDS_technology_diffusion_binary_search(
             history.append((best_k, round(time.perf_counter() - start, 4)))
         else:
             continue
-    
+
     history.append((best_k, round(time.perf_counter() - start, 4)))
     _print_binary_search_status(verbose, last_tested_k, best_k, start, max_time, done=True)
 

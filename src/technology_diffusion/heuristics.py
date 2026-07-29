@@ -15,6 +15,26 @@ def SingleDiscount(
     thetas: Mapping[int, int] | np.ndarray,
     k: int,
 ) -> tuple[int, np.ndarray]:
+    """Select seeds with the single-discount degree heuristic.
+
+    After a node is selected, its incident edges are removed and the scores of
+    its neighbors are discounted according to how many selected neighbors they
+    have. Ties are resolved randomly.
+
+    Parameters
+    ----------
+    g:
+        Diffusion graph with nodes indexed from ``0`` to ``n - 1``.
+    thetas:
+        Activation threshold for each node.
+    k:
+        Requested number of seeds.
+
+    Returns
+    -------
+    tuple
+        Diffusion spread from the selected seeds and their binary seed vector.
+    """
     w1 = nx.to_numpy_array(g)
     idx = []
     target_k = min(k, len(g.nodes))
@@ -62,6 +82,11 @@ def degree(
     thetas: Mapping[int, int] | None = None,
     connected: int = 0,
 ) -> np.ndarray:
+    """Select the ``k`` highest-degree nodes.
+
+    If ``connected`` is truthy, the selection is passed through
+    :func:`make_subset_connected` before it is encoded as a binary vector.
+    """
     degs = np.array([g.degree(v) for v in g.nodes()])
     top_k = np.argsort(-degs)[:k]
     if connected:
@@ -76,6 +101,11 @@ def degree_threshold(
     thetas: Mapping[int, int] | None = None,
     connected: int = 0,
 ) -> np.ndarray:
+    """Select nodes with the largest degree-times-threshold score.
+
+    ``thetas`` must be supplied. If ``connected`` is truthy, the selected set is
+    adjusted with :func:`make_subset_connected`.
+    """
     dt = np.array([g.degree(v) for v in g.nodes()]) * np.array(list(thetas.values()))
     top_k = np.argsort(-dt)[:k]
     if connected:
@@ -90,6 +120,7 @@ def betweenness(
     thetas: Mapping[int, int] | None = None,
     connected: int = 0,
 ) -> np.ndarray:
+    """Select the ``k`` nodes with greatest betweenness centrality."""
     bets = nx.betweenness_centrality(g)
     bet_values = np.array([bets[v] for v in g.nodes()])
     top_k = np.argsort(-bet_values)[:k]
@@ -105,6 +136,16 @@ def degree_connected(
     thetas: Mapping[int, int] | None = None,
     connected: int | None = None,
 ) -> np.ndarray:
+    """Grow a seed set from high-degree nodes along its graph frontier.
+
+    Selection starts at a maximum-degree node. Each subsequent seed is the
+    highest-degree unselected neighbor of the current set. If the frontier is
+    empty, the best remaining node is used, which also supports disconnected
+    input graphs.
+
+    The ``thetas`` and ``connected`` arguments are accepted for compatibility
+    with the common heuristic interface and are not used.
+    """
     degs = np.array([g.degree(v) for v in g.nodes()])
     target_k = min(k, len(g.nodes))
     if target_k == 0:
@@ -134,6 +175,11 @@ def high_thetas(
     thetas: Mapping[int, int] | None = None,
     connected: int = 1,
 ) -> np.ndarray:
+    """Select the ``k`` nodes with highest activation thresholds.
+
+    ``thetas`` must be supplied. If ``connected`` is truthy, the selected set is
+    adjusted with :func:`make_subset_connected`.
+    """
     sorted_nodes = sorted(g.nodes(), key=lambda x: thetas[x], reverse=True)
     top_k = sorted_nodes[:k]
     if connected:
@@ -148,6 +194,7 @@ def degree_discount(
     thetas: Mapping[int, int] | None = None,
     connected: int = 1,
 ) -> np.ndarray:
+    """Return the seed vector produced by the single-discount heuristic."""
     _, x0 = SingleDiscount(g, thetas, k)
     if connected:
         x0 = make_vector(
@@ -164,6 +211,7 @@ def random_start(
     thetas: Mapping[int, int] | None = None,
     connected: int = 1,
 ) -> np.ndarray:
+    """Select ``k`` randomly shuffled nodes as the initial seed set."""
     nodes = list(g.nodes())
     random.shuffle(nodes)
     top_k = nodes[:k]
@@ -177,8 +225,43 @@ def technology_diffusion_heuristics(
     n_nodes: int,
     thetas: Mapping[int, int] | None = None,
     connected: int = 1,
-    heuristic: Callable[[nx.Graph, int, int, Mapping[int, int] | None, int], np.ndarray] | None = None,
+    heuristic: Callable[
+        [nx.Graph, int, int, Mapping[int, int] | None, int],
+        np.ndarray,
+    ]
+    | None = None,
 ) -> tuple[np.ndarray, int, float, list[tuple[int, float]]]:
+    """Search for a small seed count using a ranking heuristic.
+
+    A binary search evaluates the chosen heuristic at different values of
+    ``k``. When a candidate does not fully diffuse, adding every node that
+    remains inactive gives a feasible upper bound and preserves the best
+    solution found so far.
+
+    Parameters
+    ----------
+    g:
+        Diffusion graph with nodes indexed from ``0`` to ``n - 1``.
+    n_nodes:
+        Number of graph nodes.
+    thetas:
+        Activation threshold for each node.
+    connected:
+        Flag forwarded to the selected heuristic.
+    heuristic:
+        Seed-selection function. Defaults to :func:`degree`.
+
+    Returns
+    -------
+    tuple
+        Best binary seed vector, its seed count, elapsed seconds, and the
+        incumbent history as ``(seed_count, elapsed)`` pairs.
+
+    Raises
+    ------
+    ValueError
+        If ``n_nodes`` is negative.
+    """
     if heuristic is None:
         heuristic = degree
 
@@ -191,6 +274,7 @@ def technology_diffusion_heuristics(
     history: list[tuple[int, float]] = [(n_nodes, 0.0)]
 
     def evaluate(k: int) -> tuple[np.ndarray, int, np.ndarray]:
+        """Build and diffuse the heuristic seed set of size ``k``."""
         x_eval = heuristic(g, n_nodes, k, thetas, connected)
         s_eval, _, active_after = connected_component_spread(g, x_eval, thetas, max_t=1000)
         return x_eval, int(s_eval), np.array(active_after, dtype=float)
@@ -215,6 +299,8 @@ def technology_diffusion_heuristics(
                 history.append((best_k, round(time.perf_counter() - start, 4)))
             top_k = k - 1
         else:
+            # Seeding every node that resisted the current diffusion produces a
+            # feasible solution and therefore an upper bound on the optimum.
             inferred_success_k = k + (n_nodes - spread_k)
             if best_k is None or inferred_success_k < best_k:
                 inferred_x = np.array(x_k, dtype=float, copy=True)

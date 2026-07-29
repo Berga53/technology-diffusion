@@ -11,6 +11,7 @@ from .helpers import connected_component_spread, make_vector, time_exceeded
 
 
 def _threshold_levels(thetas: Mapping[int, int] | np.ndarray) -> list[int]:
+    """Return the distinct activation thresholds in ascending order."""
     if hasattr(thetas, "values"):
         values = thetas.values()
     else:
@@ -24,6 +25,29 @@ def _build_gamma_data(
     start: float,
     max_time: float | None,
 ) -> tuple[list[int], list[list[int]], list[dict[int, int]], bool]:
+    """Precompute low-threshold components for every threshold level.
+
+    At level ``k``, the induced subgraph contains exactly the nodes whose
+    threshold is at most ``k``. The returned data records each node's component
+    identifier and the size of every component in that subgraph.
+
+    Parameters
+    ----------
+    g:
+        Diffusion graph with nodes indexed from ``0`` to ``n - 1``.
+    thetas:
+        Activation threshold for each node.
+    start:
+        ``time.perf_counter()`` value at which the overall algorithm started.
+    max_time:
+        Overall time budget in seconds, or ``None`` for no limit.
+
+    Returns
+    -------
+    tuple
+        Sorted threshold levels, component identifiers by level, component
+        sizes by level, and a flag indicating whether the time limit expired.
+    """
     n_nodes = g.number_of_nodes()
     levels = _threshold_levels(thetas)
 
@@ -81,6 +105,12 @@ def _gamma_size(
     comp_id_by_level: list[list[int]],
     comp_size_by_level: list[dict[int, int]],
 ) -> int:
+    """Evaluate the size of the level-specific coverage set ``gamma``.
+
+    A low-threshold seed covers its own component. A seed above the current
+    level counts individually and covers every low-threshold component adjacent
+    to it. Components touched by multiple seeds are counted only once.
+    """
     level = levels[level_idx]
 
     touched_components: set[int] = set()
@@ -92,6 +122,8 @@ def _gamma_size(
             if component_id != -1:
                 touched_components.add(component_id)
         else:
+            # A high-threshold seed is outside the level subgraph, so it counts
+            # separately while connecting to any adjacent level components.
             high_nodes.add(v)
             for u in g.neighbors(v):
                 component_id = comp_id_by_level[level_idx][u]
@@ -115,6 +147,7 @@ def _f_value(
     comp_id_by_level: list[list[int]],
     comp_size_by_level: list[dict[int, int]],
 ) -> int:
+    """Return the truncated multi-level coverage objective for ``seed_set``."""
     level_count = len(levels)
 
     if level_count == 1:
@@ -124,7 +157,15 @@ def _f_value(
     for level_idx in range(level_count - 1):
         target = levels[level_idx + 1] - 1
         total += min(
-            _gamma_size(g, thetas, seed_set, level_idx, levels, comp_id_by_level, comp_size_by_level),
+            _gamma_size(
+                g,
+                thetas,
+                seed_set,
+                level_idx,
+                levels,
+                comp_id_by_level,
+                comp_size_by_level,
+            ),
             target,
         )
 
@@ -132,6 +173,7 @@ def _f_value(
 
 
 def _f_target(levels: list[int]) -> int:
+    """Return the objective value required to satisfy every threshold level."""
     level_count = len(levels)
 
     if level_count == 1:
@@ -149,6 +191,11 @@ def _greedy_seed_set(
     start: float,
     max_time: float | None,
 ) -> tuple[set[int], bool]:
+    """Greedily add the node with greatest marginal objective gain.
+
+    Returns the selected core seed set and a flag indicating whether the shared
+    time budget expired.
+    """
     seed_set: set[int] = set()
     target = _f_target(levels)
     remaining_nodes = set(g.nodes())
@@ -206,6 +253,11 @@ def _shortest_path_to_set(
     start: float,
     max_time: float | None,
 ) -> tuple[list[int], bool]:
+    """Find an unweighted shortest path from ``source`` to any target node.
+
+    Returns the path and a timeout flag. An empty path with a false timeout flag
+    means that no target is reachable.
+    """
     if source in targets:
         return [source], False
 
@@ -243,6 +295,11 @@ def _connect_seed_set(
     start: float,
     max_time: float | None,
 ) -> tuple[set[int], bool]:
+    """Join core seeds with shortest paths to form a connected seed set.
+
+    Seeds are processed in their iteration order. Each new seed is connected
+    to the set accumulated so far through its nearest reachable target.
+    """
     seeds = list(seed_set)
 
     if not seeds:
@@ -260,6 +317,8 @@ def _connect_seed_set(
         if sp_timed_out:
             timed_out = True
             break
+        # Intermediate path nodes become seeds as well, ensuring the augmented
+        # set remains connected after every successful iteration.
         connected_seed_set.update(path)
 
     return connected_seed_set, timed_out
@@ -270,6 +329,29 @@ def approx(
     thetas: Mapping[int, int] | np.ndarray,
     max_time: float | None = None,
 ) -> tuple[int | None, np.ndarray | None, float, list[tuple[int | None, float]]]:
+    """Find a connected seed set with the approximation algorithm.
+
+    The algorithm precomputes threshold-level components, greedily maximizes a
+    truncated coverage objective, and connects the resulting core seeds with
+    shortest paths. The candidate is accepted only if diffusion activates the
+    entire graph.
+
+    Parameters
+    ----------
+    g:
+        Diffusion graph with nodes indexed from ``0`` to ``n - 1``.
+    thetas:
+        Activation threshold for each node.
+    max_time:
+        Overall time budget in seconds, or ``None`` for no limit.
+
+    Returns
+    -------
+    tuple
+        Seed-set size, binary seed vector, elapsed seconds, and a one-entry
+        ``(size, elapsed)`` history. The size and vector are ``None`` when the
+        time limit expires or the candidate does not activate the whole graph.
+    """
     start = time.perf_counter()
     n_nodes = g.number_of_nodes()
 
