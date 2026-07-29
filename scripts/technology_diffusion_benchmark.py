@@ -1,3 +1,5 @@
+"""Benchmark the connected-component diffusion simulation."""
+
 from __future__ import annotations
 
 import argparse
@@ -8,11 +10,15 @@ from pathlib import Path
 from time import perf_counter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-	sys.path.insert(0, str(PROJECT_ROOT))
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+	sys.path.insert(0, str(SRC_DIR))
 
-from src.technology_diffusion.helpers import create_pa_graph, connected_component_spread
-from src.technology_diffusion.heuristics import random_start
+from technology_diffusion import (
+	create_pa_graph,
+	connected_component_spread,
+	random_start,
+)
 
 
 def run_benchmark(

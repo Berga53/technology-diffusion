@@ -1,3 +1,5 @@
+"""Component-Aware Direct Search (COaDS) for Technology Diffusion."""
+
 import collections
 import itertools
 import math
@@ -9,10 +11,6 @@ import networkx as nx
 import numpy as np
 
 from .helpers import connected_component_spread, time_exceeded
-from .approx import (
-    _build_gamma_data,
-    _f_value,
-)
 from .heuristics import technology_diffusion_heuristics
 
 
@@ -39,7 +37,7 @@ def _seedset_from_x(x: np.ndarray) -> set[int]:
     return set(np.nonzero(x)[0])
 
 
-def _print_nads_status(
+def _print_coads_status(
     verbose: int,
     calls: int,
     start: float,
@@ -52,14 +50,14 @@ def _print_nads_status(
     if done:
         print(
             "\r"
-            + f"Neighbors search... Done! Calls:{calls}. Time: {round(time.perf_counter()-start)}/{max_time} s. "
+            + f"COaDS search... Done! Calls:{calls}. Time: {round(time.perf_counter()-start)}/{max_time} s. "
             + f"Influence spread: {spread}."
             + " " * 20
         )
     else:
         print(
             "\r"
-            + f"Neighbors search... Calls:{calls}. Time: {round(time.perf_counter()-start)}/{max_time} s. "
+            + f"COaDS search... Calls:{calls}. Time: {round(time.perf_counter()-start)}/{max_time} s. "
             + f"Influence spread: {spread}."
             + " " * 20,
             end="",
@@ -93,6 +91,55 @@ def _filter_feasible_neighbors(
     min_conn: int,
 ) -> list[set[int]]:
     return [seedset for seedset in neighbors if _meets_min_connectedness(g, seedset, min_conn)]
+
+
+def _evaluate_neighbors(
+    g: nx.Graph,
+    thetas: Mapping[int, int] | np.ndarray,
+    neighbors: list[set[int]],
+    s_base: int,
+    x_base: np.ndarray,
+    n_nodes: int,
+    xi_t: float,
+    buffer: Deque[tuple[float, ...]],
+    calls: int,
+    stop: bool,
+    history: list[list[float]],
+    start: float,
+    max_time: float,
+    verbose: int,
+    target_spread: int,
+    early_break: bool = True,
+) -> tuple[bool, np.ndarray, int, int, bool]:
+    s_temp = s_base
+    x_temp = x_base
+
+    for elem in neighbors:
+        x_elem = _x_from_seedset(n_nodes, elem)
+        key = tuple(x_elem)
+
+        if key in buffer:
+            continue
+        if time_exceeded(start, max_time):
+            stop = True
+            break
+
+        s_elem = connected_component_spread(g, x_elem, thetas=thetas, max_t=1000)[0]
+        buffer.append(key)
+        calls += 1
+        _print_coads_status(verbose, calls, start, max_time, s_elem, done=False)
+
+        if s_elem > s_temp:
+            history.append([s_elem, time.perf_counter() - start, calls])
+            x_temp = x_elem
+            s_temp = s_elem
+
+            if s_elem == target_spread:
+                return True, x_temp, s_temp, calls, stop
+            if early_break and s_temp > (1 + xi_t) * s_base:
+                break
+
+    return False, x_temp, s_temp, calls, stop
 
 
 def _make_move_connected_seedset(
@@ -152,56 +199,7 @@ def _make_move_connected_seedset(
     return s_new
 
 
-def _evaluate_neighbors(
-    g: nx.Graph,
-    thetas: Mapping[int, int] | np.ndarray,
-    neighbors: list[set[int]],
-    s_base: int,
-    x_base: np.ndarray,
-    n_nodes: int,
-    xi_t: float,
-    buffer: Deque[tuple[float, ...]],
-    calls: int,
-    stop: bool,
-    history: list[list[float]],
-    start: float,
-    max_time: float,
-    verbose: int,
-    target_spread: int,
-    early_break: bool = True,
-) -> tuple[bool, np.ndarray, int, int, bool]:
-    s_temp = s_base
-    x_temp = x_base
-
-    for elem in neighbors:
-        x_elem = _x_from_seedset(n_nodes, elem)
-        key = tuple(x_elem)
-
-        if key in buffer:
-            continue
-        if time_exceeded(start, max_time):
-            stop = True
-            break
-
-        s_elem = connected_component_spread(g, x_elem, thetas=thetas, max_t=1000)[0]
-        buffer.append(key)
-        calls += 1
-        _print_nads_status(verbose, calls, start, max_time, s_elem, done=False)
-
-        if s_elem > s_temp:
-            history.append([s_elem, time.perf_counter() - start, calls])
-            x_temp = x_elem
-            s_temp = s_elem
-
-            if s_elem == target_spread:
-                return True, x_temp, s_temp, calls, stop
-            if early_break and s_temp > (1 + xi_t) * s_base:
-                break
-
-    return False, x_temp, s_temp, calls, stop
-
-
-def _mg_phase_f_value(
+def _mg_phase(
     g: nx.Graph,
     thetas: Mapping[int, int] | np.ndarray,
     idx: set[int],
@@ -218,9 +216,6 @@ def _mg_phase_f_value(
     min_conn: int,
     mg_max_depth: int,
     mg_memory_len: int,
-    levels: list[int],
-    comp_id_by_level: list[list[int]],
-    comp_size_by_level: list[dict[int, int]],
 ) -> tuple[bool, bool, np.ndarray, int, int, bool]:
     improved_mg = False
     stop = False
@@ -235,7 +230,6 @@ def _mg_phase_f_value(
         if time_exceeded(start, max_time):
             stop = True
             break
-
         visited = {int(u_sel)}
         frontier = {int(u_sel)}
 
@@ -243,7 +237,6 @@ def _mg_phase_f_value(
             if time_exceeded(start, max_time):
                 stop = True
                 break
-
             next_frontier = set()
             for u in frontier:
                 for v in g.neighbors(u):
@@ -264,7 +257,7 @@ def _mg_phase_f_value(
 
             layer_entries = []
             for v in cand:
-                mg_v = _f_value(g, thetas, idx | {int(v)}, levels, comp_id_by_level, comp_size_by_level)
+                mg_v = sum(1 for w in g.neighbors(v) if thetas[int(w)] <= radius)
                 layer_entries.append((int(mg_v), int(v)))
 
             layer_entries.sort(key=lambda t: (t[0], -t[1]), reverse=True)
@@ -321,7 +314,7 @@ def _mg_phase_f_value(
                 s_prov = connected_component_spread(g, x_prov, thetas=thetas, max_t=1000)[0]
                 buffer.append(key)
                 calls += 1
-                _print_nads_status(verbose, calls, start, max_time, s_prov, done=False)
+                _print_coads_status(verbose, calls, start, max_time, s_prov, done=False)
 
                 if s_prov > s_temp:
                     history.append([s_prov, time.perf_counter() - start, calls])
@@ -342,7 +335,7 @@ def _mg_phase_f_value(
     return False, improved_mg, x_temp, s_temp, calls, stop
 
 
-def NaDS_td(
+def COaDS_td(
     g: nx.Graph,
     thetas: Mapping[int, int] | np.ndarray,
     x0: np.ndarray,
@@ -354,11 +347,7 @@ def NaDS_td(
     mg_memory_len: int,
     max_time: float,
     buffer_dim: int,
-    levels: list[int],
-    comp_id_by_level: list[list[int]],
-    comp_size_by_level: list[dict[int, int]],
     verbose: int = 0,
-    skip_mg_phase: bool = False,
 ) -> tuple[list[int], list[np.ndarray], list[list[float]]]:
     n_nodes = len(x0)
     x_hist = [np.array(x0, dtype=float)]
@@ -376,10 +365,10 @@ def NaDS_td(
     start = time.perf_counter()
     history = [[s_hist[-1], time.perf_counter() - start, calls]]
 
-    _print_nads_status(verbose, calls, start, max_time, s_hist[-1], done=False)
+    _print_coads_status(verbose, calls, start, max_time, s_hist[-1], done=False)
 
     if s_hist[-1] == target_spread:
-        _print_nads_status(verbose, calls, start, max_time, s_hist[-1], done=True)
+        _print_coads_status(verbose, calls, start, max_time, s_hist[-1], done=True)
         return s_hist, x_hist, history
 
     while (not stop) and (r < 1000):
@@ -389,48 +378,44 @@ def NaDS_td(
 
         idx = _seedset_from_x(x_hist[-1])
 
-        if not skip_mg_phase:
-            found_opt, improved_mg, x_temp, s_temp, calls, mg_stop = _mg_phase_f_value(
-                g,
-                thetas,
-                idx,
-                n_nodes=n_nodes,
-                k=k,
-                s_base=s_hist[-1],
-                buffer=buffer,
-                calls=calls,
-                history=history,
-                start=start,
-                max_time=max_time,
-                verbose=verbose,
-                target_spread=target_spread,
-                min_conn=min_conn,
-                mg_max_depth=mg_max_depth,
-                mg_memory_len=mg_memory_len,
-                levels=levels,
-                comp_id_by_level=comp_id_by_level,
-                comp_size_by_level=comp_size_by_level,
-            )
-            if mg_stop:
-                stop = True
-                break
+        found_opt, improved_mg, x_temp, s_temp, calls, mg_stop = _mg_phase(
+            g,
+            thetas,
+            idx,
+            n_nodes=n_nodes,
+            k=k,
+            s_base=s_hist[-1],
+            buffer=buffer,
+            calls=calls,
+            history=history,
+            start=start,
+            max_time=max_time,
+            verbose=verbose,
+            target_spread=target_spread,
+            min_conn=min_conn,
+            mg_max_depth=mg_max_depth,
+            mg_memory_len=mg_memory_len,
+        )
+        if mg_stop:
+            stop = True
+            break
 
-            if found_opt:
-                x_hist.append(x_temp)
-                s_hist.append(s_temp)
-                _print_nads_status(verbose, calls, start, max_time, s_hist[-1], done=True)
-                return s_hist, x_hist, history
+        if found_opt:
+            x_hist.append(x_temp)
+            s_hist.append(s_temp)
+            _print_coads_status(verbose, calls, start, max_time, s_hist[-1], done=True)
+            return s_hist, x_hist, history
 
-            if improved_mg:
-                x_hist.append(x_temp)
-                s_hist.append(s_temp)
-                r += 1
+        if improved_mg:
+            x_hist.append(x_temp)
+            s_hist.append(s_temp)
+            r += 1
 
-                if s_hist[-1] > (1 + xi_t) * s_hist[-2]:
-                    continue
-                if s_hist[-1] > s_hist[-2]:
-                    xi_t = xi_t * delta
+            if s_hist[-1] > (1 + xi_t) * s_hist[-2]:
                 continue
+            if s_hist[-1] > s_hist[-2]:
+                xi_t = xi_t * delta
+            continue
 
         neighbors = _generate_swap_neighbors(g, idx)
         neighbors = _filter_feasible_neighbors(g, neighbors, min_conn=min_conn)
@@ -456,7 +441,7 @@ def NaDS_td(
         if found_opt:
             x_hist.append(x_temp)
             s_hist.append(s_temp)
-            _print_nads_status(verbose, calls, start, max_time, s_hist[-1], done=True)
+            _print_coads_status(verbose, calls, start, max_time, s_hist[-1], done=True)
             return s_hist, x_hist, history
 
         x_hist.append(x_temp)
@@ -497,7 +482,7 @@ def NaDS_td(
         if found_opt:
             x_hist.append(x_temp)
             s_hist.append(s_temp)
-            _print_nads_status(verbose, calls, start, max_time, s_hist[-1], done=True)
+            _print_coads_status(verbose, calls, start, max_time, s_hist[-1], done=True)
             return s_hist, x_hist, history
 
         x_hist.append(x_temp)
@@ -512,7 +497,7 @@ def NaDS_td(
             xi_t = xi_t * delta
 
     history.append([s_hist[-1], time.perf_counter() - start, calls])
-    _print_nads_status(verbose, calls, start, max_time, s_hist[-1], done=True)
+    _print_coads_status(verbose, calls, start, max_time, s_hist[-1], done=True)
     return s_hist, x_hist, history
 
 def _print_binary_search_status(
@@ -596,7 +581,7 @@ def _rank_heuristics(
 
     return strategy_order, top_k, best_k, best_x
 
-def NaDS_technology_diffusion_binary_search(
+def COaDS_technology_diffusion_binary_search(
     g: nx.Graph,
     thetas: Mapping[int, int] | np.ndarray,
     strategy: Sequence[Callable[..., np.ndarray]],
@@ -609,23 +594,10 @@ def NaDS_technology_diffusion_binary_search(
     max_time: float,
     buffer_dim: int,
     verbose: int = 0,
-    skip_mg_phase: bool = False,
 ) -> tuple[int | None, np.ndarray | None, float, list[tuple[int, float]]]:
 
     start = time.perf_counter()
     n_nodes = g.number_of_nodes()
-    
-    levels, comp_id_by_level, comp_size_by_level, gamma_timed_out = _build_gamma_data(
-        g,
-        thetas,
-        start,
-        max_time,
-    )
-    
-    if gamma_timed_out:
-        elapsed = round(float(time.perf_counter() - start), 4)
-        return None, None, elapsed, [(None, elapsed)]
-    
     strategy_order, top_k, best_k, best_solution_x = _rank_heuristics(
         g,
         thetas,
@@ -662,12 +634,12 @@ def NaDS_technology_diffusion_binary_search(
         remaining_after_seed = _remaining_time(start, max_time)
         if remaining_after_seed <= 0:
             break
-        nads_budget = min(remaining_after_seed, time_single)
-        if nads_budget <= 0:
+        coads_budget = min(remaining_after_seed, time_single)
+        if coads_budget <= 0:
             break
 
         _print_binary_search_status(verbose, k, best_k, start, max_time, done=False)
-        s, final_x, history_nads = NaDS_td(
+        s, final_x, history_coads = COaDS_td(
             g,
             thetas,
             x,
@@ -677,17 +649,13 @@ def NaDS_technology_diffusion_binary_search(
             min_conn,
             mg_max_depth,
             mg_memory_len,
-            nads_budget,
+            coads_budget,
             buffer_dim,
-            levels,
-            comp_id_by_level,
-            comp_size_by_level,
             0,
-            skip_mg_phase=skip_mg_phase,
         )
         spread = s[-1]
         x_last = np.array(final_x[-1], dtype=float)
-        times[k] = history_nads[-1][1]
+        times[k] = history_coads[-1][1]
         strategy_tried[k] = -1 if times[k] < 0.9 * time_single else 0
         if strategy_tried[k] == -1:
             temp_x[k] = x_last
@@ -735,12 +703,12 @@ def NaDS_technology_diffusion_binary_search(
         remaining_after_seed = _remaining_time(start, max_time)
         if remaining_after_seed <= 0:
             break
-        nads_budget = min(remaining_after_seed, remaining)
-        if nads_budget <= 0:
+        coads_budget = min(remaining_after_seed, remaining)
+        if coads_budget <= 0:
             break
         
         _print_binary_search_status(verbose, k, best_k, start, max_time, done=False)
-        s, final_x, _ = NaDS_td(
+        s, final_x, _ = COaDS_td(
             g,
             thetas,
             x,
@@ -750,13 +718,9 @@ def NaDS_technology_diffusion_binary_search(
             min_conn,
             mg_max_depth,
             mg_memory_len,
-            nads_budget,
+            coads_budget,
             buffer_dim,
-            levels,
-            comp_id_by_level,
-            comp_size_by_level,
             0,
-            skip_mg_phase=skip_mg_phase,
         )
         strategy_tried[k] = strat
 

@@ -1,3 +1,4 @@
+"""Mixed-integer formulations for Technology Diffusion."""
 
 import time
 from typing import Any, Mapping, Optional

@@ -26,3 +26,6 @@ dist/
 build/
 results/
 figures/
+
+# Archived files kept locally during reorganization
+/misc/

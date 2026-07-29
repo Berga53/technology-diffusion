@@ -14,18 +14,18 @@ SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-RESULTS = ROOT / "experiments" / "technology diffusion"
+RESULTS = ROOT / "results" / "technology diffusion"
 RESULTS.mkdir(parents=True, exist_ok=True)
 
 from technology_diffusion import (
-    NaDS_technology_diffusion_binary_search,
-    degree_discount,
+    COaDS_technology_diffusion_binary_search,
     betweenness,
     build_exact_ip,
     build_golberg_liu_ip,
     create_pa_graph,
     degree,
     degree_connected,
+    degree_discount,
     degree_threshold,
     high_thetas,
     random_start,
@@ -93,7 +93,7 @@ def resolve_output_paths(args: argparse.Namespace) -> tuple[Path, Path, Path]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run technology diffusion experiment comparing NaDS, Goldberg-Liu, and Exact IP.")
+    parser = argparse.ArgumentParser(description="Run technology diffusion experiment comparing COaDS, Goldberg-Liu, and Exact IP.")
     parser.add_argument("--c-list", type=int, nargs="+", default=DEFAULT_C_LIST)
     parser.add_argument("--n-list", type=int, nargs="+", default=DEFAULT_N_LIST)
     parser.add_argument("--seed-list", type=int, nargs="+", default=DEFAULT_SEED_LIST)
@@ -115,10 +115,10 @@ def parse_args() -> argparse.Namespace:
         help="Per-run time limit used as max_time_scale * n_nodes (default: 4 seconds per node).",
     )
     parser.add_argument(
-        "--nads-max-time-scale",
+        "--coads-max-time-scale",
         type=float,
         default=1,
-        help="Per-run time limit for NaDS used as nads_max_time_scale * n_nodes (default: 1 second per node).",
+        help="Per-run time limit for COaDS used as coads_max_time_scale * n_nodes (default: 1 second per node).",
     )
     parser.add_argument(
         "--skip-gurobi-from-n",
@@ -176,7 +176,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_nads_strategy() -> list:
+def build_coads_strategy() -> list:
     return [
         degree_threshold,
         high_thetas,
@@ -259,7 +259,7 @@ def append_gurobi_log_header(
 
 def main() -> None:
     args = parse_args()
-    nads_strategy = build_nads_strategy()
+    coads_strategy = build_coads_strategy()
     heuristics = build_heuristics()
     results_csv_path, gurobi_log_path, static_params_path = resolve_output_paths(args)
 
@@ -278,7 +278,7 @@ def main() -> None:
     try:
         for run_idx, (n_nodes, c, seed) in enumerate(combinations, start=1):
             max_time = args.max_time_scale * n_nodes
-            nads_max_time = args.nads_max_time_scale * n_nodes
+            coads_max_time = args.coads_max_time_scale * n_nodes
             gl_model = None
             exact_model = None
             gl_x = None
@@ -493,34 +493,34 @@ def main() -> None:
                 exact_history,
             )
 
-            nads_k, final_x, nads_runtime, nads_history = NaDS_technology_diffusion_binary_search(
+            coads_k, final_x, coads_runtime, coads_history = COaDS_technology_diffusion_binary_search(
                 g,
                 thetas,
-                nads_strategy,
+                coads_strategy,
                 args.delta,
                 args.xi,
                 args.d,
                 args.min_conn,
                 args.mg_max_depth,
                 args.mg_memory_len,
-                nads_max_time,
+                coads_max_time,
                 args.buffer_dim,
                 args.verbose,
             )
 
             append_result(
                 results,
-                "nads_binary_search",
+                "coads_binary_search",
                 n_nodes,
                 c,
                 seed,
-                round(float(nads_runtime), 4),
-                int(nads_k) if nads_k is not None else None,
-                [list(event) for event in nads_history] if nads_history is not None else None,
+                round(float(coads_runtime), 4),
+                int(coads_k) if coads_k is not None else None,
+                [list(event) for event in coads_history] if coads_history is not None else None,
             )
             print_algorithm_line(
-                "nads_binary_search",
-                format_k_time(int(nads_k) if nads_k is not None else None, float(nads_runtime)),
+                "coads_binary_search",
+                format_k_time(int(coads_k) if coads_k is not None else None, float(coads_runtime)),
             )
 
             if gl_x is not None:
@@ -575,13 +575,13 @@ def main() -> None:
         "mg_memory_len": args.mg_memory_len,
         "verbose": args.verbose,
         "max_time_scale": args.max_time_scale,
-        "nads_max_time_scale": args.nads_max_time_scale,
+        "coads_max_time_scale": args.coads_max_time_scale,
         "skip_gurobi_from_n": args.skip_gurobi_from_n,
         "skip_exact_from_n": args.skip_exact_from_n,
         "exact_time_horizon": args.exact_time_horizon,
         "exact_use_simultaneous": args.exact_use_simultaneous,
         "heuristics": [fn.__name__ for fn in heuristics],
-        "nads_strategy": [fn.__name__ for fn in nads_strategy],
+        "coads_strategy": [fn.__name__ for fn in coads_strategy],
         "result_columns": columns,
     }
 

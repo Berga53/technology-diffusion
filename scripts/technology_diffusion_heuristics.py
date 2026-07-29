@@ -13,24 +13,37 @@ SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-RESULTS = ROOT / "experiments" / "technology diffusion"
+RESULTS = ROOT / "results" / "technology diffusion"
 RESULTS.mkdir(parents=True, exist_ok=True)
 
 from technology_diffusion import (
-    degree_discount,
     betweenness,
     create_pa_graph,
     degree,
     degree_connected,
+    degree_discount,
     degree_threshold,
     high_thetas,
-    random_start,
     technology_diffusion_heuristics,
 )
 
 DEFAULT_C_LIST = [1, 5, 10, 20]
 DEFAULT_N_LIST = [200, 400, 600, 1000, 2000]
 DEFAULT_SEED_LIST = [1, 42, 53, 99, 101]
+
+ALGORITHM_LABEL_WIDTH = 34
+K_VALUE_WIDTH = 3
+TIME_VALUE_WIDTH = 7
+
+
+def print_algorithm_line(algorithm: str, message: str) -> None:
+    print(f"{algorithm:<{ALGORITHM_LABEL_WIDTH}} | {message}")
+
+
+def format_k_time(k_value: int | None, total_time: float | None) -> str:
+    k_text = "None" if k_value is None else str(k_value)
+    time_text = "None" if total_time is None else f"{total_time:.2f}s"
+    return f"k: {k_text:>{K_VALUE_WIDTH}} | time: {time_text:>{TIME_VALUE_WIDTH}}"
 
 
 def _format_values_for_name(prefix: str, values: list[int]) -> str:
@@ -72,13 +85,18 @@ def resolve_output_paths(args: argparse.Namespace) -> tuple[Path, Path]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the technology diffusion heuristics experiment.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run deterministic heuristics for the technology diffusion experiment."
+        )
+    )
     parser.add_argument("--c-list", type=int, nargs="+", default=DEFAULT_C_LIST)
     parser.add_argument("--n-list", type=int, nargs="+", default=DEFAULT_N_LIST)
     parser.add_argument("--seed-list", type=int, nargs="+", default=DEFAULT_SEED_LIST)
     parser.add_argument("--init-nodes", type=int, default=5)
     parser.add_argument("--init-mode", choices=["complete", "tree"], default="complete")
     parser.add_argument("--connected", type=int, default=1)
+    parser.add_argument("--verbose", type=int, default=1)
     parser.add_argument(
         "--results-csv-path",
         type=Path,
@@ -99,7 +117,7 @@ def parse_args() -> argparse.Namespace:
         "--auto-name-outputs",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Append a tag derived from n/c/seed selections to output file names.",
+        help="Append a tag derived from seed selections to output file names.",
     )
     parser.add_argument("--save-results-csv", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
@@ -113,8 +131,30 @@ def build_heuristics() -> list:
         degree_connected,
         degree,
         betweenness,
-        random_start,
     ]
+
+
+def append_result(
+    rows: list[list],
+    algorithm: str,
+    n_nodes: int,
+    c: int,
+    seed: int,
+    total_time: float | None,
+    k_value: int | None,
+    history: list | None,
+) -> None:
+    rows.append(
+        [
+            algorithm,
+            n_nodes,
+            c,
+            seed,
+            total_time,
+            k_value,
+            json.dumps(history if history is not None else None),
+        ]
+    )
 
 
 def main() -> None:
@@ -125,17 +165,17 @@ def main() -> None:
     combinations = list(itertools.product(args.n_list, args.c_list, args.seed_list))
 
     print(f"Total graph runs: {len(combinations)}")
-    print(f"Heuristics per graph: {len(heuristics)}")
-    print(f"Total heuristic evaluations: {len(combinations) * len(heuristics)}")
+    print(f"Deterministic heuristics: {len(heuristics)}")
     print(f"Results CSV: {results_csv_path}")
     print(f"Static params: {static_params_path}")
 
     results = []
     start_all = time.perf_counter()
+
     for run_idx, (n_nodes, c, seed) in enumerate(combinations, start=1):
         print("\n" + "=" * 90)
         print(
-            f"Graph run {run_idx}/{len(combinations)} | "
+            f"Run {run_idx}/{len(combinations)} | "
             f"N={n_nodes}, c={c}, seed={seed}, init_nodes={args.init_nodes}, init_mode={args.init_mode}"
         )
 
@@ -149,48 +189,44 @@ def main() -> None:
 
         for heuristic_fn in heuristics:
             h_name = heuristic_fn.__name__
-            h_start = time.perf_counter()
-            _, h_k, _ = technology_diffusion_heuristics(
+            _, h_k, h_runtime, h_history = technology_diffusion_heuristics(
                 g,
                 n_nodes,
                 thetas=thetas,
                 connected=args.connected,
                 heuristic=heuristic_fn,
             )
-            h_runtime = round(time.perf_counter() - h_start, 4)
-
-            results.append(
-                [
-                    n_nodes,
-                    c,
-                    seed,
-                    g.number_of_nodes(),
-                    g.number_of_edges(),
-                    h_name,
-                    h_runtime,
-                    h_k,
-                ]
+            append_result(
+                results,
+                h_name,
+                n_nodes,
+                c,
+                seed,
+                round(float(h_runtime), 4),
+                int(h_k) if h_k is not None else None,
+                [list(event) for event in h_history] if h_history is not None else None,
             )
-
-            print(f"{h_name:<14} -> K={h_k}, runtime={round(float(h_runtime), 2)}s")
+            print_algorithm_line(
+                f"heuristic: {h_name}",
+                format_k_time(int(h_k) if h_k is not None else None, float(h_runtime)),
+            )
 
     elapsed_all = time.perf_counter() - start_all
     columns = [
+        "algorithm",
         "n_nodes",
         "c",
         "seed",
-        "num_nodes",
-        "num_edges",
-        "heuristic_name",
-        "heuristic_runtime_s",
-        "heuristic_K",
+        "total_time",
+        "K",
+        "history",
     ]
 
     results_df = pd.DataFrame(results, columns=columns)
-    results_df = results_df.sort_values(["n_nodes", "c", "seed", "heuristic_name"]).reset_index(drop=True)
+    results_df = results_df.sort_values(["n_nodes", "c", "seed", "algorithm"]).reset_index(drop=True)
 
     print("\n" + "=" * 90)
-    print(f"Completed {len(results_df)} heuristic evaluations in {round(elapsed_all, 2)} seconds.")
+    print(f"Completed {len(results_df)} algorithm evaluations in {round(elapsed_all, 2)} seconds.")
 
     if args.save_results_csv:
         results_df.to_csv(results_csv_path, index=False)
@@ -200,7 +236,9 @@ def main() -> None:
         "init_nodes": args.init_nodes,
         "init_mode": args.init_mode,
         "connected": args.connected,
-        "heuristic_names": [fn.__name__ for fn in heuristics],
+        "verbose": args.verbose,
+        "heuristics": [fn.__name__ for fn in heuristics],
+        "result_columns": columns,
     }
 
     with static_params_path.open("w", encoding="utf-8") as file:

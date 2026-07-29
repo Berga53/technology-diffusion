@@ -16,8 +16,7 @@ if str(SRC_DIR) not in sys.path:
 RESULTS = ROOT / "results" / "technology diffusion"
 RESULTS.mkdir(parents=True, exist_ok=True)
 
-from technology_diffusion import create_pa_graph
-from technology_diffusion.approx import approx
+from technology_diffusion import approx, create_pa_graph
 
 DEFAULT_C_LIST = [1, 5, 10, 20]
 DEFAULT_N_LIST = [200, 400, 600, 1000, 2000]
@@ -96,12 +95,12 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--results-csv-path",
 		type=Path,
-		default=RESULTS / "technology_diffusion_results_approx.csv",
+		default=RESULTS / "technology_diffusion_approx_results.csv",
 	)
 	parser.add_argument(
 		"--static-params-path",
 		type=Path,
-		default=RESULTS / "technology_diffusion_static_params_approx.json",
+		default=RESULTS / "technology_diffusion_approx_static_params.json",
 	)
 	parser.add_argument(
 		"--run-label",

@@ -1,3 +1,5 @@
+"""Approximation algorithm for Technology Diffusion."""
+
 from collections import deque
 import time
 from typing import Mapping

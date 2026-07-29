@@ -9,7 +9,7 @@ setup:
 	$(VENV_PYTHON) -m pip install -r requirements.txt
 
 run-technology-diffusion:
-	$(VENV_PYTHON) scripts/run_technology_diffusion.py
+	$(VENV_PYTHON) scripts/technology_diffusion.py
 
 run-technology-diffusion-help:
-	$(VENV_PYTHON) scripts/run_technology_diffusion.py --help
+	$(VENV_PYTHON) scripts/technology_diffusion.py --help

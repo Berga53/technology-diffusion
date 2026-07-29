@@ -18,29 +18,55 @@ RESULTS = ROOT / "results" / "technology diffusion"
 RESULTS.mkdir(parents=True, exist_ok=True)
 
 from technology_diffusion import (
-    NaDS_technology_diffusion_binary_search,
-    degree_discount,
+    COaDS_technology_diffusion_binary_search,
+    approx,
     betweenness,
     build_golberg_liu_ip,
     create_pa_graph,
     degree,
     degree_connected,
+    degree_discount,
     degree_threshold,
     high_thetas,
     random_start,
     technology_diffusion_heuristics,
-    approx
 )
 
 DEFAULT_C_LIST = [1, 5, 10, 20]
 DEFAULT_N_LIST = [200, 400, 600, 1000, 2000]
-DEFAULT_SEED_LIST = [i for i in range(1, 25)]
+DEFAULT_SEED_LIST = [
+    1,
+    2,
+    3,
+    5,
+    7,
+    11,
+    13,
+    15,
+    16,
+    17,
+    19,
+    25,
+    32,
+    33,
+    42,
+    53,
+    64,
+    71,
+    75,
+    98,
+    99,
+    101,
+    104,
+    111,
+    118,
+]
 
 ALGORITHM_LABEL_WIDTH = 34
 K_VALUE_WIDTH = 3
 TIME_VALUE_WIDTH = 7
 
-NADS_STRATEGY_FUNCTIONS = {
+COADS_STRATEGY_FUNCTIONS = {
     "high_thetas": high_thetas,
     "degree_threshold": degree_threshold,
     "random_start": random_start,
@@ -50,7 +76,7 @@ NADS_STRATEGY_FUNCTIONS = {
     "betweenness": betweenness,
 }
 
-DEFAULT_NADS_STRATEGY = ["high_thetas", "degree_threshold", "random_start"]
+DEFAULT_COADS_STRATEGY = ["high_thetas", "degree_threshold", "random_start"]
 
 
 def print_algorithm_line(algorithm: str, message: str) -> None:
@@ -91,6 +117,9 @@ def add_tag_to_path(path: Path, tag: str) -> Path:
 
 
 def resolve_output_paths(args: argparse.Namespace) -> tuple[Path, Path, Path]:
+    if not args.auto_name_outputs:
+        return args.results_csv_path, args.gurobi_log_path, args.static_params_path
+
     run_tag = build_run_tag(args)
     return (
         add_tag_to_path(args.results_csv_path, run_tag),
@@ -102,7 +131,7 @@ def resolve_output_paths(args: argparse.Namespace) -> tuple[Path, Path, Path]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run deterministic heuristics, Goldberg-Liu, approximation, and NaDS for the technology diffusion experiment."
+            "Run deterministic heuristics, Goldberg-Liu, approximation, and COaDS for the technology diffusion experiment."
         )
     )
     parser.add_argument("--c-list", type=int, nargs="+", default=DEFAULT_C_LIST)
@@ -120,12 +149,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mg-memory-len", type=int, default=10)
     parser.add_argument("--verbose", type=int, default=1)
     parser.add_argument(
-        "--nads-strategy",
+        "--coads-strategy",
         type=str,
         nargs="+",
-        choices=sorted(NADS_STRATEGY_FUNCTIONS.keys()),
-        default=DEFAULT_NADS_STRATEGY,
-        help="Ordered list of strategy initializers to try in NaDS binary search. ",
+        choices=sorted(COADS_STRATEGY_FUNCTIONS.keys()),
+        default=DEFAULT_COADS_STRATEGY,
+        help="Ordered list of strategy initializers to try in COaDS binary search.",
     )
     parser.add_argument(
         "--max-time-scale",
@@ -160,13 +189,19 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional label appended to output file names, useful for reruns of the same batch.",
     )
+    parser.add_argument(
+        "--auto-name-outputs",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Append a tag derived from seed selections to output file names.",
+    )
     parser.add_argument("--save-results-csv", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--save-gurobi-log", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
 
-def build_nads_strategy(strategy_names: list[str]) -> list:
-    return [NADS_STRATEGY_FUNCTIONS[name] for name in strategy_names]
+def build_coads_strategy(strategy_names: list[str]) -> list:
+    return [COADS_STRATEGY_FUNCTIONS[name] for name in strategy_names]
 
 
 def build_heuristics() -> list:
@@ -300,7 +335,7 @@ def run_goldberg_liu(
 
 def main() -> None:
     args = parse_args()
-    nads_strategy = build_nads_strategy(args.nads_strategy)
+    coads_strategy = build_coads_strategy(args.coads_strategy)
     heuristics = build_heuristics()
     results_csv_path, gurobi_log_path, static_params_path = resolve_output_paths(args)
 
@@ -405,10 +440,10 @@ def main() -> None:
                 format_k_time(int(approx_k) if approx_k is not None else None, approx_runtime),
             )
 
-            nads_k, final_x, nads_runtime, nads_history = NaDS_technology_diffusion_binary_search(
+            coads_k, final_x, coads_runtime, coads_history = COaDS_technology_diffusion_binary_search(
                 g,
                 thetas,
-                nads_strategy,
+                coads_strategy,
                 args.delta,
                 args.xi,
                 args.d,
@@ -421,17 +456,17 @@ def main() -> None:
             )
             append_result(
                 results,
-                "nads_binary_search",
+                "coads_binary_search",
                 n_nodes,
                 c,
                 seed,
-                round(float(nads_runtime), 4),
-                int(nads_k) if nads_k is not None else None,
-                [list(event) for event in nads_history] if nads_history is not None else None,
+                round(float(coads_runtime), 4),
+                int(coads_k) if coads_k is not None else None,
+                [list(event) for event in coads_history] if coads_history is not None else None,
             )
             print_algorithm_line(
-                "nads_binary_search",
-                format_k_time(int(nads_k) if nads_k is not None else None, float(nads_runtime)),
+                "coads_binary_search",
+                format_k_time(int(coads_k) if coads_k is not None else None, float(coads_runtime)),
             )
 
             if final_x is not None:
@@ -476,7 +511,7 @@ def main() -> None:
         "max_time_scale": args.max_time_scale,
         "skip_gurobi_from_n": args.skip_gurobi_from_n,
         "heuristics": [fn.__name__ for fn in heuristics],
-        "nads_strategy": [fn.__name__ for fn in nads_strategy],
+        "coads_strategy": [fn.__name__ for fn in coads_strategy],
         "result_columns": columns,
     }
 

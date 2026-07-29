@@ -1,3 +1,4 @@
+"""Seed-selection heuristics for Technology Diffusion."""
 
 import random
 import time
@@ -177,12 +178,14 @@ def technology_diffusion_heuristics(
     thetas: Mapping[int, int] | None = None,
     connected: int = 1,
     heuristic: Callable[[nx.Graph, int, int, Mapping[int, int] | None, int], np.ndarray] | None = None,
-) -> tuple[np.ndarray, int, list[tuple[int, float]]]:
+) -> tuple[np.ndarray, int, float, list[tuple[int, float]]]:
     if heuristic is None:
         heuristic = degree
 
-    if n_nodes <= 0:
-        return np.zeros(n_nodes), 0, [(0, 0.0)]
+    if n_nodes < 0:
+        raise ValueError("n_nodes must be non-negative.")
+    if n_nodes == 0:
+        return np.zeros(0), 0, 0.0, [(0, 0.0)]
 
     start = time.perf_counter()
     history: list[tuple[int, float]] = [(n_nodes, 0.0)]
