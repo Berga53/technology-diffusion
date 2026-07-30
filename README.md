@@ -13,22 +13,16 @@ algorithm, exact-IP validation, and **COaDS (Component-Aware Direct Search)**.
   - `coads.py`: Component-Aware Direct Search.
   - `approx.py`: the approximation algorithm.
   - `ip_problems.py`: Goldberg–Liu and exact-IP formulations.
+- `technology_diffusion_results.ipynb`: the main results notebook, with
+  summaries, plots, statistics, relative-gap analysis, and performance
+  profiles.
 - `scripts/`: five maintained experiment runners.
   - `technology_diffusion.py`: main experiment.
   - `technology_diffusion_exact.py`: exact-IP validation on small graphs.
   - `technology_diffusion_heuristics.py`: deterministic-heuristic experiments.
   - `technology_diffusion_approx.py`: approximation experiments.
   - `technology_diffusion_benchmark.py`: diffusion-runtime benchmarks.
-- `notebooks/`: maintained analysis and validation notebooks.
-  - `technology_diffusion_results.ipynb`: result summaries, plots, and
-    performance profiles.
-  - `technology_diffusion_exact_ip_validation.ipynb`: exact-IP checks.
-  - `technology_diffusion_approximation_validation.ipynb`: approximation
-    checks.
-- `results/` and `figures/`: generated outputs; both are ignored by Git.
-- `misc/`: local archive for superseded scripts, notebooks, and other files.
-  It is also ignored by Git.
-
+  
 ## Setup
 
 The code has been tested with Python 3.13.7. Create the project environment
@@ -131,6 +125,12 @@ COaDS results use the algorithm label `coads_binary_search`. Output filenames
 are tagged automatically with the experiment parameters to reduce accidental
 overwrites. Use `--no-auto-name-outputs` when a fixed filename is preferred;
 the runners also provide options for overriding individual output paths.
+
+Open the root-level results notebook after generating the experiment data:
+
+```bash
+jupyter notebook technology_diffusion_results.ipynb
+```
 
 ## Importing the package
 
