@@ -120,7 +120,7 @@ def get_activation_sequence_and_seeds(
                 t_of[i] = t
                 break
 
-    seeds = [i for i in v if t_of[i] <= int(theta[i])]
+    seeds = [i for i in v if t_of[i] < int(theta[i])]
     order = sorted(v, key=lambda i: t_of[i])
     return t_of, order, seeds
 
