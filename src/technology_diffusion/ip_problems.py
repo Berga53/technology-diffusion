@@ -51,7 +51,7 @@ def build_golberg_liu_ip(
     # Positions up to theta[u] identify the nodes that must be seeded rather
     # than activated through an earlier connected component.
     m.setObjective(
-        gp.quicksum(x[u, t] for u in v for t in t_range if t <= int(theta[u])),
+        gp.quicksum(x[u, t] for u in v for t in t_range if t < int(theta[u])),
         GRB.MINIMIZE,
     )
 
