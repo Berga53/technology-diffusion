@@ -3,7 +3,8 @@
 Research code for studying technology diffusion on networks and finding small
 sets of initially active nodes. The repository includes deterministic
 heuristics, the Goldberg–Liu mixed-integer formulation, an approximation
-algorithm, exact-IP validation, and **COaDS (Component-Aware Direct Search)**.
+algorithm, a connectivity-bound experiment on small graphs, and
+**COaDS (Component-Aware Direct Search)**.
 
 ## Repository layout
 
@@ -16,12 +17,11 @@ algorithm, exact-IP validation, and **COaDS (Component-Aware Direct Search)**.
 - `technology_diffusion_results.ipynb`: the main results notebook, with
   summaries, plots, statistics, relative-gap analysis, and performance
   profiles.
-- `scripts/`: five maintained experiment runners.
+- `scripts/`: three maintained experiment runners.
   - `technology_diffusion.py`: main experiment.
-  - `technology_diffusion_exact.py`: exact-IP validation on small graphs.
-  - `technology_diffusion_heuristics.py`: deterministic-heuristic experiments.
-  - `technology_diffusion_approx.py`: approximation experiments.
   - `technology_diffusion_benchmark.py`: diffusion-runtime benchmarks.
+  - `technology_diffusion_bounds.py`: connectivity bound on small graphs
+    (brute-force OPT vs. Goldberg–Liu vs. min{2OPT, OPT+ℓ}).
   
 ## Setup
 
@@ -96,16 +96,18 @@ the CLI filters when testing changes.
 Each specialized runner has its own `--help` output:
 
 ```bash
-python scripts/technology_diffusion_exact.py --help
-python scripts/technology_diffusion_heuristics.py --help
-python scripts/technology_diffusion_approx.py --help
 python scripts/technology_diffusion_benchmark.py --help
+python scripts/technology_diffusion_bounds.py --help
 ```
 
-The exact runner compares COaDS and Goldberg–Liu with the exact-IP solution on
-small instances. The heuristic and approximation runners isolate their
-respective algorithm families, while the benchmark measures diffusion-runtime
-behavior.
+The benchmark runner measures diffusion-runtime behavior.
+
+The bounds runner compares, on small graphs (by default `n = 6, 8, 10, 12, 15, 20`,
+`c = 1, 2, 3, 4`, seeds `0-9`), the unrestricted optimum found by brute force,
+the Goldberg–Liu IP solution (connected activation sequences, not guaranteed
+to reach the connected optimum), and the bound
+`min{2OPT, OPT+ℓ}`. It writes `approx_goldberg_liu_vs_bruteforce.csv`, which the
+"Connectivity Bound" section of the results notebook plots.
 
 ## Results
 
