@@ -177,7 +177,7 @@ def build_exact_ip(
 
     t = range(1, time_horizon + 1)
     t0 = range(0, time_horizon + 1)
-    r = range(k)
+    r = range(1, k+1)
 
     model = gp.Model("component_threshold_diffusion", env=env)
     x = model.addVars(v, t0, vtype=GRB.BINARY, name="x")
@@ -287,7 +287,7 @@ def build_exact_ip(
                 model.addConstr(y[i, rr, tp] <= rhs, name=f"prop[{i},{rr},{tp}]")
                 
     #symmetries in the labels are broken by assigning to a component the label of its initial seed 
-    model.addConstrs((y[i, i, 0] == x[i, 0] for i in v), name="initial_label")
+    model.addConstrs((y[i, i+1, 0] == x[i, 0] for i in v), name="initial_label")
 
     model.update()
     return model, x, y, nvar
