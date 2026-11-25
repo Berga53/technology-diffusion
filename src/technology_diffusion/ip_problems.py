@@ -171,8 +171,7 @@ def build_exact_ip(
     n_nodes = len(v)
     if time_horizon is None:
         time_horizon = (
-            n_nodes - 1
-            + n_nodes * (n_nodes.bit_length() - 1)
+            2*n_nodes - 2
         )
 
     t = range(1, time_horizon + 1)
